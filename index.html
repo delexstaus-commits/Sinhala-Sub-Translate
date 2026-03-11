@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT Spoken Transformer PRO v4</title>
+    <style>
+        :root { --primary: #00d2ff; --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --danger: #ef4444; --success: #10b981; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        .container { max-width: 950px; margin: auto; }
+        .upload-section { border: 2px dashed #334155; padding: 30px; text-align: center; border-radius: 15px; background: var(--card); margin-bottom: 20px; }
+        .chunk-box { background: var(--card); margin-top: 15px; padding: 15px; border-radius: 10px; border-left: 5px solid var(--primary); position: relative; }
+        
+        .status-bar { display: flex; justify-content: space-between; align-items: center; background: #000; padding: 8px 15px; border-radius: 5px; margin-bottom: 10px; font-size: 13px; }
+        .status-match { color: var(--success); font-weight: bold; }
+        .status-miss { color: var(--danger); font-weight: bold; }
+        
+        textarea { width: 100%; height: 120px; background: #000; color: #00ffcc; border: 1px solid #334155; border-radius: 5px; padding: 10px; font-size: 13px; margin-top: 10px; font-family: inherit; box-sizing: border-box; }
+        textarea:focus { border-color: var(--primary); outline: none; }
+        
+        button { cursor: pointer; border: none; border-radius: 5px; font-weight: bold; transition: 0.2s; padding: 10px 20px; }
+        .btn-copy { background: var(--primary); color: #000; }
+        .btn-done { background: #f59e0b; color: #000; width: 100%; padding: 20px; font-size: 18px; margin-top: 30px; }
+        
+        .time-display { font-size: 11px; color: #64748b; font-family: monospace; display: block; margin-bottom: 2px; }
+        .updated-text { color: #00ffcc; font-weight: bold; white-space: pre-wrap; display: block; }
+        input[type="file"] { display: none; }
+        .file-label { background: #334155; color: white; padding: 12px 25px; border-radius: 5px; cursor: pointer; display: inline-block; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 style="text-align: center;">SRT Spoken Transformer PRO <span style="color:var(--primary)">v4</span></h2>
+    
+    <div class="upload-section">
+        <label for="srtFile" class="file-label" onclick="document.getElementById('srtFile').click();">📂 Open SRT File</label>
+        <input type="file" id="srtFile" accept="*/*" >
+        <p id="fileName" style="margin-top:15px; color: #94a3b8;"></p>
+    </div>
+
+    <div id="outputArea"></div>
+    <button id="doneBtn" class="btn-done" style="display:none;" onclick="downloadSRT()">✅ Done & Download Updated SRT</button>
+</div>
+
+<script>
+let srtData = [];
+
+// Master Prompt එක පේළි කැඩීම් (line breaks) වලට ගැලපෙන ලෙස වෙනස් කරන ලදී
+const masterPromptText = `Act as an expert English to Sinhala translator specializing in natural, conversational "Spoken Sinhala" (කටවහර).
+
+Your Mission:
+1. Translate all lines provided below into natural, everyday Spoken Sinhala.
+2. I have provided the English lines with their original line numbers and line breaks.
+3. IMPORTANT: You MUST keep the same line breaks in your Sinhala translation to maintain subtitle formatting. 
+   - If an English line is broken into two, the Sinhala translation for that line must also be broken into two at a natural point.
+   - Do NOT use [BR] tags. Use actual line breaks (Enter).
+4. Maintain the line number for each entry strictly (e.g., 1. වාක්‍යය).
+5. DO NOT skip any line. Translate from 1 to 100 meticulously.
+6. Provide ONLY the translated lines inside a single Markdown code block.
+
+Input Lines:
+`;
+
+document.getElementById('srtFile').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    document.getElementById('fileName').innerText = "Selected: " + file.name;
+    const reader = new FileReader();
+    reader.onload = function(event) { 
+        parseAndDisplay(event.target.result); 
+    };
+    reader.readAsText(file, "UTF-8");
+}, false);
+
+function parseAndDisplay(content) {
+    const outputArea = document.getElementById('outputArea');
+    outputArea.innerHTML = '';
+    srtData = [];
+
+    // Blocks වෙන් කිරීම (Windows/Unix line endings වලට ගැලපෙන ලෙස)
+    const blocks = content.trim().split(/\r?\n\s*\r?\n/);
+    let currentChunk = [];
+    let chunkCounter = 1;
+
+    blocks.forEach((block, index) => {
+        const lines = block.split(/\r?\n/).map(l => l.trim());
+        if(lines.length >= 3) {
+            const id = lines[0];
+            const time = lines[1];
+            // මුල් ගොනුවේ ඇති පේළි කැඩීම් ඒ විදිහටම තබා ගනී
+            const textLines = lines.slice(2);
+            const originalText = textLines.join('\n');
+            
+            const obj = { id, time, text: originalText, updatedText: originalText };
+            srtData.push(obj);
+            currentChunk.push(obj);
+
+            if (currentChunk.length === 100 || index === blocks.length - 1) {
+                renderChunkUI(currentChunk, chunkCounter++);
+                currentChunk = [];
+            }
+        }
+    });
+    document.getElementById('doneBtn').style.display = 'block';
+}
+
+function renderChunkUI(chunk, chunkIndex) {
+    // Prompt එකට යවන විට එක් එක් subtitle එක අතර පැහැදිලි හිස් පේළියක් තබයි
+    let copyLines = chunk.map(item => `${item.id}.\n${item.text}`).join('\n\n');
+    let finalPrompt = masterPromptText + "\n" + copyLines;
+
+    const div = document.createElement('div');
+    div.className = 'chunk-box';
+    div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <strong>කොටස ${chunkIndex}</strong>
+            <button class="btn-copy" onclick="fallbackCopy(this, ${chunkIndex})">📋 Copy Prompt</button>
+            <textarea id="hidden-text-${chunkIndex}" style="display:none;">${finalPrompt}</textarea>
+        </div>
+
+        <div class="status-bar">
+            <span>මුල් පේළි ගණන: <b id="target-count-${chunkIndex}">${chunk.length}</b></span>
+            <span id="status-msg-${chunkIndex}">පරිවර්තනය බලාපොරොත්තුවෙන්...</span>
+            <span>Paste කළ පේළි: <b id="current-count-${chunkIndex}">0</b></span>
+        </div>
+
+        <textarea placeholder="Gemini දුන් Code එක මෙතනට Paste කරන්න..." oninput="realTimeUpdate(${chunkIndex}, this.value, ${chunk.length})"></textarea>
+
+        <div id="preview-${chunkIndex}" style="background:#111; padding:10px; border-radius:5px; font-size:13px; margin-top:10px; max-height: 250px; overflow-y: auto; border: 1px solid #222;">
+            ${chunk.map(item => `
+                <div style="margin-bottom:8px; border-bottom:1px solid #222; padding-bottom:5px;">
+                    <span class="time-display">[${item.id}] ${item.time}</span>
+                    <span id="text-${item.id}" class="updated-text">${item.text}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    document.getElementById('outputArea').appendChild(div);
+}
+
+function realTimeUpdate(chunkIdx, val, targetLen) {
+    // Gemini Output එක පිරිසිදු කර ID එක සහ Text එක වෙන් කිරීම
+    // Regex එක මගින් "1." හෝ "1" වැනි රටා හඳුනා ගනී
+    const lines = val.split(/\n(?=\d+[\.\)\s]*\n|\d+[\.\)\s]+[^\d\n])/).filter(l => l.trim() !== '');
+    const currentLen = lines.length;
+    
+    const statusMsg = document.getElementById(`status-msg-${chunkIdx}`);
+    const countDisplay = document.getElementById(`current-count-${chunkIdx}`);
+    countDisplay.innerText = currentLen;
+
+    if (currentLen === targetLen) {
+        statusMsg.innerText = "✅ සියල්ල නිවැරදියි!";
+        statusMsg.className = "status-match";
+    } else {
+        const diff = targetLen - currentLen;
+        statusMsg.innerText = diff > 0 ? `⚠️ පේළි ${diff} ක් අඩුයි!` : `⚠️ පේළි ${Math.abs(diff)} ක් වැඩියි!`;
+        statusMsg.className = "status-miss";
+    }
+
+    const startIdx = (chunkIdx - 1) * 100;
+    lines.forEach((line, i) => {
+        // ID එක සහ ඉතිරි Text එක වෙන් කිරීම
+        let cleanText = line.replace(/^\d+[\.\)\s]*/, '').trim();
+        const dataIndex = startIdx + i;
+
+        if (srtData[dataIndex]) {
+            srtData[dataIndex].updatedText = cleanText;
+            const displayElem = document.getElementById(`text-${srtData[dataIndex].id}`);
+            if (displayElem) {
+                displayElem.innerText = cleanText;
+                displayElem.className = "updated-text";
+            }
+        }
+    });
+}
+
+function fallbackCopy(btn, index) {
+    const textArea = document.getElementById(`hidden-text-${index}`);
+    textArea.style.display = 'block';
+    textArea.select();
+    textArea.setSelectionRange(0, 99999);
+    try {
+        document.execCommand('copy');
+        btn.innerText = "✅ Prompt Copied!";
+        setTimeout(() => btn.innerText = "📋 Copy Prompt", 2000);
+    } catch (err) { alert("Copy failed!"); }
+    textArea.style.display = 'none';
+}
+
+function downloadSRT() {
+    let finalSrt = "";
+    srtData.forEach(item => {
+        // SRT එක සෑදීමේදී updatedText එක එලෙසම (line breaks සමග) එකතු කරයි
+        finalSrt += `${item.id}\n${item.time}\n${item.updatedText}\n\n`;
+    });
+    const blob = new Blob([finalSrt], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "Updated_Spoken_Sinhala.srt";
+    document.body.appendChild(a); 
+    a.click();
+    document.body.removeChild(a);
+}
+</script>
+
+</body>
+</html>
